@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { BabyCheckMark } from '../components/Icons'
 import { bottleKindLabels } from '../content/hr'
-import { evaluateBottleSafety } from '../domain/bottles/evaluateBottleSafety'
+import { evaluateActiveBottles } from '../domain/bottles/evaluateBottleSafety'
 import type { BabyProfile, DerivedMetrics } from '../domain/types'
 import { formatAge, formatClock, formatDuration } from '../utils/dateTime'
 
@@ -39,9 +39,9 @@ export function Dashboard({
   onHistory,
   onUrgentHelp,
 }: DashboardProps) {
-  const activeWarning = metrics.activeBottles
-    .map((bottle) => ({ bottle, result: evaluateBottleSafety(bottle, profile, now) }))
-    .find(({ result }) => result.state !== 'safe')
+  const activeWarning = evaluateActiveBottles(metrics.activeBottles, profile, now).find(
+    ({ result }) => result.state !== 'safe',
+  )
 
   const babyName = profile.nickname || 'Vaša beba'
   const currentDuration = metrics.isSleeping

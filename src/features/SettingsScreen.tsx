@@ -45,6 +45,14 @@ export function SettingsScreen({
     const file = event.target.files?.[0]
     if (!file) return
     try {
+      if (
+        !window.confirm(
+          'Uvoz će zamijeniti sve trenutačne podatke. Jeste li prethodno izvezli sigurnosnu kopiju i želite nastaviti?',
+        )
+      ) {
+        event.target.value = ''
+        return
+      }
       await onImport(file)
       setMessage('Sigurnosna kopija uspješno je uvezena.')
     } catch {
@@ -104,6 +112,7 @@ export function SettingsScreen({
               key={value}
               type="button"
               className={settings.theme === value ? 'selected' : ''}
+              aria-pressed={settings.theme === value}
               onClick={() => onTheme(value)}
             >
               {icon}
@@ -171,6 +180,7 @@ export function SettingsScreen({
         <button
           className="settings-disclosure"
           type="button"
+          aria-expanded={showSources}
           onClick={() => setShowSources((value) => !value)}
         >
           <Info aria-hidden="true" />

@@ -30,20 +30,43 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   async function finish(event: FormEvent) {
     event.preventDefault()
     if (!birthDate || !accepted) return
+    const born = new Date(`${birthDate}T12:00:00`)
+    const oldestSupported = new Date()
+    oldestSupported.setMonth(oldestSupported.getMonth() - 24)
+    if (born < oldestSupported) {
+      setError('BabyCheck je namijenjen bebama i djeci do 24 mjeseca.')
+      return
+    }
+    if (premature) {
+      if (!dueDate) {
+        setError('Unesite očekivani datum poroda za korigiranu dob.')
+        return
+      }
+      const due = new Date(`${dueDate}T12:00:00`)
+      if (due <= born || due.getTime() - born.getTime() > 17 * 7 * 86_400_000) {
+        setError('Očekivani datum mora biti nakon rođenja i unutar 17 tjedana.')
+        return
+      }
+    }
+
     setSaving(true)
     setError('')
     const timestamp = nowIso()
     let persistent: AppSettings['persistentStorage'] = 'unknown'
     try {
       if (navigator.storage?.persist) {
-        persistent = (await navigator.storage.persist()) ? 'granted' : 'notGranted'
+        try {
+          persistent = (await navigator.storage.persist()) ? 'granted' : 'notGranted'
+        } catch {
+          persistent = 'notGranted'
+        }
       }
       await onComplete(
         {
           id: 'primary',
           nickname: nickname.trim(),
           birthDate,
-          dueDate: dueDate || undefined,
+          dueDate: premature ? dueDate : undefined,
           premature,
           region,
           bottleKinds,
@@ -127,7 +150,6 @@ export function Onboarding({ onComplete }: OnboardingProps) {
             <p className="onboarding-copy">
               Datum rođenja potreban je za dobno prikladne sigurnosne informacije.
             </p>
-
             <div className="form-grid">
               <label className="field">
                 <span>
@@ -155,7 +177,10 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                 <input
                   type="checkbox"
                   checked={premature}
-                  onChange={(event) => setPremature(event.target.checked)}
+                  onChange={(event) => {
+                    setPremature(event.target.checked)
+                    if (!event.target.checked) setDueDate('')
+                  }}
                 />
                 <span>
                   <strong>Rođena je prije termina</strong>
@@ -167,6 +192,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                   <span>Očekivani datum poroda</span>
                   <input
                     type="date"
+                    required
                     value={dueDate}
                     onChange={(event) => setDueDate(event.target.value)}
                   />
@@ -214,6 +240,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                     <button
                       key={option.value}
                       type="button"
+                      aria-pressed={selected}
                       className={`choice-pill${selected ? ' selected' : ''}`}
                       onClick={() =>
                         setBottleKinds((current) =>

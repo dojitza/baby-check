@@ -141,5 +141,5 @@ export const clinicianSigns = [
   'Osip ne blijedi kada ga pritisnete.',
   'Beba odbija piti, često povraća ili ima znatno manje mokrih pelena.',
   'Plač je trajan, neobičan ili bebu nije moguće utješiti.',
-  'Beba mlađa od 3 mjeseca ima temperaturu višu od 38 °C.',
+  'Beba mlađa od 3 mjeseca ima temperaturu 38,0 °C ili višu.',
 ]

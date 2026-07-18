@@ -33,6 +33,21 @@ test('persists the profile after reload', async ({ page }) => {
   await expect(page.getByRole('button', { name: /Započni provjeru/ })).toBeVisible()
 })
 
+test('returns from urgent help to the same checklist progress', async ({ page }) => {
+  await page.goto('./')
+  await completeOnboarding(page)
+  await page.getByRole('button', { name: /Započni provjeru/ }).click()
+  await expect(page.getByText('1 od 11')).toBeVisible()
+  await page
+    .getByRole('dialog', { name: 'Beba je nemirna' })
+    .getByRole('button', { name: /Otvori znakove za hitnu pomoć/ })
+    .click()
+  await expect(page.getByRole('heading', { name: 'Kada odmah tražiti pomoć' })).toBeVisible()
+  await page.getByRole('button', { name: 'Zatvori' }).last().click()
+  await expect(page.getByRole('heading', { name: 'Prvo provjerite znakove bolesti' })).toBeVisible()
+  await expect(page.getByText('1 od 11')).toBeVisible()
+})
+
 test('is installable, private at runtime and reloads offline', async ({
   page,
   context,

@@ -46,24 +46,30 @@ export function FussyFlow({
   const [completed, setCompleted] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const startedAt = useMemo(() => nowIso(), [])
   const current = recommendations[index]
   const contact = regionContacts[profile.region]
 
   async function record(outcome: FussyCheckOutcome) {
+    if (saving) return
     const nextResults = [...results, { category: current.category, outcome, completedAt: nowIso() }]
-    setResults(nextResults)
     if (outcome === 'helped') {
-      setResolved(true)
-      setCompleted(true)
-      await persist(nextResults, true, current.category)
+      if (await persist(nextResults, true, current.category)) {
+        setResults(nextResults)
+        setResolved(true)
+        setCompleted(true)
+      }
       return
     }
     if (index >= recommendations.length - 1) {
-      setCompleted(true)
-      await persist(nextResults, false)
+      if (await persist(nextResults, false)) {
+        setResults(nextResults)
+        setCompleted(true)
+      }
       return
     }
+    setResults(nextResults)
     setIndex((value) => value + 1)
   }
 
@@ -71,8 +77,9 @@ export function FussyFlow({
     sessionResults: FussySession['results'],
     isResolved: boolean,
     resolvedBy?: FussySession['resolvedBy'],
-  ) {
+  ): Promise<boolean> {
     setSaving(true)
+    setSaveError('')
     try {
       await onSave({
         id: randomId('fussy'),
@@ -94,6 +101,10 @@ export function FussyFlow({
         },
         results: sessionResults,
       })
+      return true
+    } catch {
+      setSaveError('Provjera nije spremljena. Podaci nisu izgubljeni — pokušajte ponovno.')
+      return false
     } finally {
       setSaving(false)
     }
@@ -147,12 +158,7 @@ export function FussyFlow({
               </span>
             </div>
           </aside>
-          <button
-            className="button button--primary button--large"
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-          >
+          <button className="button button--primary button--large" type="button" onClick={onClose}>
             Završi
           </button>
         </div>
@@ -163,7 +169,6 @@ export function FussyFlow({
   const sourceItems = current.sourceIds
     .map((id) => sources.find((source) => source.id === id))
     .filter(Boolean)
-
   return (
     <Modal
       title="Beba je nemirna"
@@ -175,14 +180,19 @@ export function FussyFlow({
         <span>
           {index + 1} od {recommendations.length}
         </span>
-        <div>
+        <div
+          role="progressbar"
+          aria-label="Napredak provjere"
+          aria-valuemin={1}
+          aria-valuemax={recommendations.length}
+          aria-valuenow={index + 1}
+        >
           <i style={{ width: `${((index + 1) / recommendations.length) * 100}%` }} />
         </div>
-        <button type="button" onClick={() => setShowAll((value) => !value)}>
+        <button type="button" aria-expanded={showAll} onClick={() => setShowAll((value) => !value)}>
           <ListChecks aria-hidden="true" /> Cijeli popis <ChevronDown aria-hidden="true" />
         </button>
       </div>
-
       {showAll ? (
         <ol className="recommendation-overview">
           {recommendations.map((item, itemIndex) => (
@@ -202,7 +212,6 @@ export function FussyFlow({
           ))}
         </ol>
       ) : null}
-
       <article className={`recommendation-card recommendation-card--lane-${current.lane}`}>
         <div className="recommendation-number">{index + 1}</div>
         <p className="eyebrow">PROVJERITE SADA</p>
@@ -230,22 +239,37 @@ export function FussyFlow({
           </div>
         ) : null}
       </article>
-
       <div className="outcome-actions">
         <button
           className="button button--success button--large"
           type="button"
           onClick={() => record('helped')}
+          disabled={saving}
         >
           <Heart aria-hidden="true" /> {outcomeLabels.helped}
         </button>
-        <button className="button button--secondary" type="button" onClick={() => record('notIt')}>
+        <button
+          className="button button--secondary"
+          type="button"
+          onClick={() => record('notIt')}
+          disabled={saving}
+        >
           <Check aria-hidden="true" /> {outcomeLabels.notIt}
         </button>
-        <button className="button button--ghost" type="button" onClick={() => record('skipped')}>
+        <button
+          className="button button--ghost"
+          type="button"
+          onClick={() => record('skipped')}
+          disabled={saving}
+        >
           <SkipForward aria-hidden="true" /> {outcomeLabels.skipped}
         </button>
       </div>
+      {saveError ? (
+        <p className="form-error" role="alert">
+          {saveError}
+        </p>
+      ) : null}
       {index > 0 ? (
         <button className="text-back" type="button" onClick={() => setIndex((value) => value - 1)}>
           <ArrowLeft aria-hidden="true" /> Prethodna provjera

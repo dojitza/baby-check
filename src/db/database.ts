@@ -47,17 +47,42 @@ export async function ensureDefaultSettings(): Promise<AppSettings> {
   return settings
 }
 
-const profileSchema = z.object({
-  id: z.literal('primary'),
-  nickname: z.string().max(40),
-  birthDate: z.iso.date(),
-  dueDate: z.iso.date().optional(),
-  premature: z.boolean(),
-  region: z.enum(['hovedstaden', 'sjaelland', 'syddanmark', 'midtjylland', 'nordjylland']),
-  bottleKinds: z.array(z.enum(['powderFormula', 'readyFormula', 'expressedMilk'])),
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-})
+const categorySchema = z.enum([
+  'urgent',
+  'bottleSafety',
+  'tired',
+  'hungry',
+  'nappy',
+  'wind',
+  'temperature',
+  'contact',
+  'stimulation',
+  'discomfort',
+  'professionalCare',
+  'caregiverSafety',
+])
+
+const profileSchema = z
+  .object({
+    id: z.literal('primary'),
+    nickname: z.string().max(40),
+    birthDate: z.iso.date(),
+    dueDate: z.iso.date().optional(),
+    premature: z.boolean(),
+    region: z.enum(['hovedstaden', 'sjaelland', 'syddanmark', 'midtjylland', 'nordjylland']),
+    bottleKinds: z.array(z.enum(['powderFormula', 'readyFormula', 'expressedMilk'])),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .refine((profile) => !profile.dueDate || profile.premature, {
+    message: 'Due date requires premature profile',
+  })
+  .refine(
+    (profile) =>
+      !profile.dueDate ||
+      new Date(profile.dueDate).getTime() > new Date(profile.birthDate).getTime(),
+    { message: 'Due date must be after birth date' },
+  )
 
 const settingsSchema = z.object({
   id: z.literal('settings'),
@@ -70,53 +95,56 @@ const settingsSchema = z.object({
   updatedAt: z.iso.datetime(),
 })
 
-const sleepSchema = z.object({
-  id: z.string(),
-  startAt: z.iso.datetime(),
-  endAt: z.iso.datetime().optional(),
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-})
+const sleepSchema = z
+  .object({
+    id: z.string(),
+    startAt: z.iso.datetime(),
+    endAt: z.iso.datetime().optional(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .refine(
+    (entry) => !entry.endAt || new Date(entry.endAt).getTime() > new Date(entry.startAt).getTime(),
+    { message: 'Sleep must end after it starts' },
+  )
 
-const bottleSchema = z.object({
-  id: z.string(),
-  kind: z.enum(['powderFormula', 'readyFormula', 'expressedMilk']),
-  status: z.enum(['prepared', 'feeding', 'finished', 'discarded']),
-  storage: z.enum(['fresh', 'fridge', 'roomTemperature']),
-  preparedAt: z.iso.datetime(),
-  feedingStartedAt: z.iso.datetime().optional(),
-  finishedAt: z.iso.datetime().optional(),
-  discardedAt: z.iso.datetime().optional(),
-  offeredMl: z.number().min(0).max(1000),
-  consumedMl: z.number().min(0).max(1000).optional(),
-  notes: z.string().max(500).optional(),
-  guidanceVersion: z.string(),
-  createdAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-})
+const bottleSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(['powderFormula', 'readyFormula', 'expressedMilk']),
+    status: z.enum(['prepared', 'feeding', 'finished', 'discarded']),
+    storage: z.enum(['fresh', 'fridge', 'roomTemperature']),
+    preparedAt: z.iso.datetime(),
+    feedingStartedAt: z.iso.datetime().optional(),
+    finishedAt: z.iso.datetime().optional(),
+    discardedAt: z.iso.datetime().optional(),
+    offeredMl: z.number().min(0).max(1000),
+    consumedMl: z.number().min(0).max(1000).optional(),
+    notes: z.string().max(500).optional(),
+    guidanceVersion: z.string(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+  .refine((entry) => entry.consumedMl === undefined || entry.consumedMl <= entry.offeredMl, {
+    message: 'Consumed amount exceeds offered amount',
+  })
+  .refine((entry) => entry.status !== 'feeding' || Boolean(entry.feedingStartedAt), {
+    message: 'Feeding bottle requires start time',
+  })
+  .refine((entry) => entry.status !== 'finished' || Boolean(entry.finishedAt), {
+    message: 'Finished bottle requires finish time',
+  })
+  .refine((entry) => entry.status !== 'discarded' || Boolean(entry.discardedAt), {
+    message: 'Discarded bottle requires discard time',
+  })
 
 const fussySessionSchema = z.object({
   id: z.string(),
   startedAt: z.iso.datetime(),
   endedAt: z.iso.datetime().optional(),
   resolved: z.boolean(),
-  resolvedBy: z
-    .enum([
-      'urgent',
-      'bottleSafety',
-      'tired',
-      'hungry',
-      'nappy',
-      'wind',
-      'temperature',
-      'contact',
-      'stimulation',
-      'discomfort',
-      'professionalCare',
-      'caregiverSafety',
-    ])
-    .optional(),
-  recommendationOrder: z.array(z.string()),
+  resolvedBy: categorySchema.optional(),
+  recommendationOrder: z.array(categorySchema),
   snapshot: z.object({
     babyAgeDays: z.number(),
     correctedAgeDays: z.number(),
@@ -128,25 +156,52 @@ const fussySessionSchema = z.object({
   }),
   results: z.array(
     z.object({
-      category: z.string(),
+      category: categorySchema,
       outcome: z.enum(['notIt', 'helped', 'skipped']),
       completedAt: z.iso.datetime(),
     }),
   ),
 })
 
-const backupSchema = z.object({
-  app: z.literal('BabyCheck'),
-  schemaVersion: z.literal(1),
-  exportedAt: z.iso.datetime(),
-  data: z.object({
-    profiles: z.array(profileSchema).max(1),
-    settings: z.array(settingsSchema).max(1),
-    sleepEntries: z.array(sleepSchema),
-    bottleEntries: z.array(bottleSchema),
-    fussySessions: z.array(fussySessionSchema),
-  }),
-})
+const backupSchema = z
+  .object({
+    app: z.literal('BabyCheck'),
+    schemaVersion: z.literal(1),
+    exportedAt: z.iso.datetime(),
+    data: z.object({
+      profiles: z.array(profileSchema).length(1),
+      settings: z.array(settingsSchema).length(1),
+      sleepEntries: z.array(sleepSchema),
+      bottleEntries: z.array(bottleSchema),
+      fussySessions: z.array(fussySessionSchema),
+    }),
+  })
+  .superRefine((backup, context) => {
+    const ids = new Set<string>()
+    const allRecords = [
+      ...backup.data.sleepEntries,
+      ...backup.data.bottleEntries,
+      ...backup.data.fussySessions,
+    ]
+    for (const record of allRecords) {
+      if (!record.id || ids.has(record.id)) {
+        context.addIssue({ code: 'custom', message: 'Record IDs must be unique and non-empty' })
+        break
+      }
+      ids.add(record.id)
+    }
+
+    const sleep = [...backup.data.sleepEntries].sort(
+      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+    )
+    for (let index = 1; index < sleep.length; index += 1) {
+      const previousEnd = sleep[index - 1].endAt
+      if (!previousEnd || new Date(sleep[index].startAt) < new Date(previousEnd)) {
+        context.addIssue({ code: 'custom', message: 'Sleep records overlap' })
+        break
+      }
+    }
+  })
 
 export type BabyCheckBackup = z.infer<typeof backupSchema>
 

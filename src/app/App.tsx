@@ -41,6 +41,7 @@ export function App() {
   )
   const [route, setRoute] = useState<Route>(routeFromHash)
   const [overlay, setOverlay] = useState<Overlay>(null)
+  const [urgentOverFussy, setUrgentOverFussy] = useState(false)
   const [editingSleep, setEditingSleep] = useState<SleepEntry | undefined>()
   const [now, setNow] = useState(() => new Date())
 
@@ -145,6 +146,10 @@ export function App() {
           onBack={() => navigate('today')}
           onDeleteSleep={(id) => db.sleepEntries.delete(id)}
           onDeleteBottle={(id) => db.bottleEntries.delete(id)}
+          onUpdateBottle={async (entry) => {
+            await db.bottleEntries.put(entry)
+          }}
+          onDeleteFussy={(id) => db.fussySessions.delete(id)}
           onEditSleep={(entry) => {
             setEditingSleep(entry)
             setOverlay('sleep')
@@ -167,13 +172,28 @@ export function App() {
             const anchor = document.createElement('a')
             anchor.href = url
             anchor.download = `babycheck-backup-${new Date().toISOString().slice(0, 10)}.json`
+            document.body.append(anchor)
             anchor.click()
-            URL.revokeObjectURL(url)
+            anchor.remove()
+            window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
             await db.settings.update('settings', { lastBackupAt: nowIso(), updatedAt: nowIso() })
           }}
           onImport={async (file) => {
             const backup = validateBackup(JSON.parse(await file.text()))
-            await importDatabase(backup)
+            const localPersistence = settings.persistentStorage
+            await importDatabase({
+              ...backup,
+              data: {
+                ...backup.data,
+                settings: [
+                  {
+                    ...backup.data.settings[0],
+                    persistentStorage: localPersistence,
+                    updatedAt: nowIso(),
+                  },
+                ],
+              },
+            })
           }}
           onClear={async () => {
             await clearDatabase()
@@ -186,6 +206,7 @@ export function App() {
       <nav className="bottom-nav" aria-label="Glavna navigacija">
         <button
           className={route === 'today' ? 'active' : ''}
+          aria-current={route === 'today' ? 'page' : undefined}
           type="button"
           onClick={() => navigate('today')}
         >
@@ -194,6 +215,7 @@ export function App() {
         </button>
         <button
           className={route === 'history' ? 'active' : ''}
+          aria-current={route === 'history' ? 'page' : undefined}
           type="button"
           onClick={() => navigate('history')}
         >
@@ -202,6 +224,7 @@ export function App() {
         </button>
         <button
           className={route === 'settings' ? 'active' : ''}
+          aria-current={route === 'settings' ? 'page' : undefined}
           type="button"
           onClick={() => navigate('settings')}
         >
@@ -240,12 +263,18 @@ export function App() {
           onSave={async (session: FussySession) => {
             await db.fussySessions.put(session)
           }}
-          onUrgentHelp={() => setOverlay('urgent')}
-          onClose={() => setOverlay(null)}
+          onUrgentHelp={() => setUrgentOverFussy(true)}
+          onClose={() => {
+            setUrgentOverFussy(false)
+            setOverlay(null)
+          }}
         />
       ) : null}
       {overlay === 'urgent' ? (
         <UrgentHelp region={profile.region} onClose={() => setOverlay(null)} />
+      ) : null}
+      {urgentOverFussy ? (
+        <UrgentHelp region={profile.region} onClose={() => setUrgentOverFussy(false)} />
       ) : null}
 
       {needRefresh ? (

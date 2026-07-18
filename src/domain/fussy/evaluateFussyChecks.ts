@@ -5,7 +5,7 @@ import type {
   FussyCheckCategory,
   FussySession,
 } from '../types'
-import { evaluateBottleSafety } from '../bottles/evaluateBottleSafety'
+import { evaluateActiveBottles } from '../bottles/evaluateBottleSafety'
 import { formatDuration } from '../../utils/dateTime'
 
 const CATEGORY_TIE_ORDER: FussyCheckCategory[] = [
@@ -31,12 +31,11 @@ export function evaluateFussyChecks(
 ): CheckRecommendation[] {
   const recommendations: CheckRecommendation[] = [urgentCheck()]
 
-  for (const bottle of metrics.activeBottles) {
-    const evaluation = evaluateBottleSafety(bottle, profile, now)
-    if (evaluation.recommendation) {
-      recommendations.push(evaluation.recommendation)
-      break
-    }
+  const activeBottleWarning = evaluateActiveBottles(metrics.activeBottles, profile, now).find(
+    ({ result }) => result.recommendation,
+  )
+  if (activeBottleWarning?.result.recommendation) {
+    recommendations.push(activeBottleWarning.result.recommendation)
   }
 
   if (!metrics.isSleeping) {

@@ -7,6 +7,27 @@ export interface BottleSafetyEvaluation {
   label: string
 }
 
+const SAFETY_SEVERITY: Record<BottleSafetyEvaluation['state'], number> = {
+  safe: 0,
+  needsLabel: 1,
+  caution: 2,
+  discard: 3,
+}
+
+export function evaluateActiveBottles(
+  bottles: BottleEntry[],
+  profile: BabyProfile,
+  now = new Date(),
+): Array<{ bottle: BottleEntry; result: BottleSafetyEvaluation }> {
+  return bottles
+    .map((bottle) => ({ bottle, result: evaluateBottleSafety(bottle, profile, now) }))
+    .sort((a, b) => {
+      const severity = SAFETY_SEVERITY[b.result.state] - SAFETY_SEVERITY[a.result.state]
+      if (severity !== 0) return severity
+      return new Date(a.bottle.preparedAt).getTime() - new Date(b.bottle.preparedAt).getTime()
+    })
+}
+
 export function evaluateBottleSafety(
   bottle: BottleEntry,
   profile: BabyProfile,
@@ -50,6 +71,17 @@ export function evaluateBottleSafety(
   const preparedMinutesAgo = differenceInMinutes(now, new Date(bottle.preparedAt))
 
   if (profile.premature || ageDays < 60) {
+    if (bottle.storage === 'fresh' && preparedMinutesAgo <= 60) {
+      return warning(
+        'caution',
+        'Upotrijebite svježu bočicu sada.',
+        profile.premature
+          ? 'Za prerano rođenu bebu pripremajte jednu svježu bočicu neposredno prije svakog hranjenja, osim ako je zdravstveni stručnjak rekao drukčije.'
+          : 'U prva dva mjeseca pripremajte jednu svježu bočicu neposredno prije svakog hranjenja.',
+        `Označena je kao svježa i pripremljena prije ${preparedMinutesAgo} min. Nemojte je spremati za kasnije.`,
+        ['dk-sundhed-formula-2025', 'dk-sst-formula-2020'],
+      )
+    }
     return warning(
       'discard',
       'Pripremite novu bočicu neposredno prije hranjenja.',
