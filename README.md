@@ -71,7 +71,9 @@ For life-threatening illness or injury in Denmark, call `112`. Persistent, unusu
 
 The application is built for the `/baby-check/` subpath and deployed to GitHub Pages by `.github/workflows/deploy-pages.yml` after the quality workflow passes on `main`.
 
-Expected production URL: `https://dojitza.github.io/baby-check/`.
+Production URL: `https://kotarski.dev/baby-check/`. GitHub's standard
+`https://dojitza.github.io/baby-check/` address redirects there because this
+account already has the verified `kotarski.dev` Pages domain.
 
 Repository Settings → Pages must use **GitHub Actions** as the source. A public repository is required on GitHub Free.
 
