@@ -1,5 +1,5 @@
 import {
-  ArchiveRestore,
+  Bell,
   ChevronLeft,
   Database,
   Download,
@@ -13,15 +13,17 @@ import {
   Upload,
 } from 'lucide-react'
 import { useRef, useState, type ChangeEvent } from 'react'
-import { regionContacts, sources } from '../content/sources'
-import type { AppSettings, BabyProfile, ThemePreference } from '../domain/types'
-import { formatDateTime, nowIso } from '../utils/dateTime'
+import { sources } from '../content/sources'
+import type { AppSettings, BabyProfile, ReminderKind, ThemePreference } from '../domain/types'
+import { formatDateTime } from '../utils/dateTime'
 
-interface SettingsScreenProps {
+interface Props {
   profile: BabyProfile
   settings: AppSettings
   onBack: () => void
   onTheme: (theme: ThemePreference) => Promise<void>
+  onReminder: (kind: ReminderKind, enabled: boolean) => Promise<void>
+  onRequestNotifications: () => Promise<void>
   onExport: () => Promise<void>
   onImport: (file: File) => Promise<void>
   onClear: () => Promise<void>
@@ -32,27 +34,21 @@ export function SettingsScreen({
   settings,
   onBack,
   onTheme,
+  onReminder,
+  onRequestNotifications,
   onExport,
   onImport,
   onClear,
-}: SettingsScreenProps) {
+}: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
   const [showSources, setShowSources] = useState(false)
-  const contact = regionContacts[profile.region]
 
   async function importFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
     try {
-      if (
-        !window.confirm(
-          'Uvoz će zamijeniti sve trenutačne podatke. Jeste li prethodno izvezli sigurnosnu kopiju i želite nastaviti?',
-        )
-      ) {
-        event.target.value = ''
-        return
-      }
+      if (!window.confirm('Uvoz zamjenjuje sve trenutačne podatke. Nastaviti?')) return
       await onImport(file)
       setMessage('Sigurnosna kopija uspješno je uvezena.')
     } catch {
@@ -60,17 +56,6 @@ export function SettingsScreen({
     } finally {
       event.target.value = ''
     }
-  }
-
-  async function clear() {
-    if (
-      !window.confirm(
-        'Izbrisati sve BabyCheck podatke s ovog uređaja? Ova radnja nema poništavanje.',
-      )
-    )
-      return
-    if (!window.confirm('Jeste li sigurni? Preporučujemo prvo izvesti sigurnosnu kopiju.')) return
-    await onClear()
   }
 
   return (
@@ -84,7 +69,6 @@ export function SettingsScreen({
           <h1>Postavke</h1>
         </div>
       </header>
-
       <section className="settings-card profile-card">
         <div className="profile-avatar">{profile.nickname?.slice(0, 1).toUpperCase() || 'B'}</div>
         <div>
@@ -92,9 +76,45 @@ export function SettingsScreen({
           <strong>{profile.nickname || 'Beba'}</strong>
           <span>
             Rođena{' '}
-            {new Intl.DateTimeFormat('hr-HR').format(new Date(`${profile.birthDate}T12:00:00`))} ·{' '}
-            {contact.label}
+            {new Intl.DateTimeFormat('hr-HR').format(new Date(`${profile.birthDate}T12:00:00`))}
           </span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>Obavijesti</h2>
+        <article className="storage-card">
+          <Bell aria-hidden="true" />
+          <div>
+            <strong>{permissionTitle(settings.notificationPermission)}</strong>
+            <span>
+              Obavijesti se pouzdano prikazuju dok je aplikacija aktivna. Frontend-only PWA ne može
+              zajamčeno probuditi zatvorenu aplikaciju.
+            </span>
+          </div>
+        </article>
+        {settings.notificationPermission === 'default' ? (
+          <button
+            className="button button--primary button--large reminder-permission"
+            type="button"
+            onClick={onRequestNotifications}
+          >
+            Dopusti obavijesti
+          </button>
+        ) : null}
+        <div className="settings-actions reminder-settings">
+          <ReminderToggle
+            label="Podsjeti za san"
+            checked={settings.sleepRemindersEnabled}
+            disabled={settings.notificationPermission !== 'granted'}
+            onChange={(value) => onReminder('sleep', value)}
+          />
+          <ReminderToggle
+            label="Podsjeti za obrok"
+            checked={settings.mealRemindersEnabled}
+            disabled={settings.notificationPermission !== 'granted'}
+            onChange={(value) => onReminder('meal', value)}
+          />
         </div>
       </section>
 
@@ -111,8 +131,8 @@ export function SettingsScreen({
             <button
               key={value}
               type="button"
-              className={settings.theme === value ? 'selected' : ''}
               aria-pressed={settings.theme === value}
+              className={settings.theme === value ? 'selected' : ''}
               onClick={() => onTheme(value)}
             >
               {icon}
@@ -131,9 +151,7 @@ export function SettingsScreen({
             <span>
               {settings.persistentStorage === 'granted'
                 ? 'Preglednik je odobrio trajnu pohranu.'
-                : settings.persistentStorage === 'notGranted'
-                  ? 'Pohrana može biti izbrisana pod pritiskom prostora.'
-                  : 'Status trajne pohrane nije poznat.'}
+                : 'Pohrana se može izbrisati; redovito izvezite kopiju.'}
             </span>
           </div>
         </article>
@@ -145,7 +163,7 @@ export function SettingsScreen({
               <small>
                 {settings.lastBackupAt
                   ? `Zadnja: ${formatDateTime(settings.lastBackupAt)}`
-                  : 'JSON datoteka s privatnim podacima'}
+                  : 'Privatna JSON datoteka'}
               </small>
             </span>
           </button>
@@ -153,7 +171,7 @@ export function SettingsScreen({
             <Upload aria-hidden="true" />
             <span>
               <strong>Uvezi sigurnosnu kopiju</strong>
-              <small>Zamjenjuje trenutačne podatke nakon provjere</small>
+              <small>Podržava BabyCheck verzije 1 i 2</small>
             </span>
           </button>
           <input
@@ -170,13 +188,12 @@ export function SettingsScreen({
           </p>
         ) : null}
         <p className="privacy-note">
-          <Database aria-hidden="true" /> BabyCheck ne šalje zapise na poslužitelj. Brisanje
-          podataka preglednika ili aplikacije može izbrisati sve zapise.
+          <Database aria-hidden="true" /> Zapisi ne napuštaju uređaj.
         </p>
       </section>
 
       <section className="settings-section">
-        <h2>Smjernice i pomoć</h2>
+        <h2>Smjernice</h2>
         <button
           className="settings-disclosure"
           type="button"
@@ -185,10 +202,10 @@ export function SettingsScreen({
         >
           <Info aria-hidden="true" />
           <span>
-            <strong>Danski službeni izvori</strong>
-            <small>Provjereno 18. srpnja 2026.</small>
+            <strong>Izvori i ograničenja</strong>
+            <small>San u 24 sata + osobni ritam</small>
           </span>
-          <ChevronLeft className={showSources ? 'open' : ''} aria-hidden="true" />
+          <ChevronLeft className={showSources ? 'open' : ''} />
         </button>
         {showSources ? (
           <div className="source-list">
@@ -196,41 +213,69 @@ export function SettingsScreen({
               <a key={source.id} href={source.url} target="_blank" rel="noreferrer">
                 <span>
                   <strong>{source.title}</strong>
-                  <small>
-                    {source.authority}
-                    {source.reviewedAt ? ` · ${source.reviewedAt}` : ''}
-                  </small>
+                  <small>{source.authority}</small>
                 </span>
-                <ExternalLink aria-hidden="true" />
+                <ExternalLink />
               </a>
             ))}
           </div>
         ) : null}
-        <a className="settings-link" href={contact.url} target="_blank" rel="noreferrer">
-          <ArchiveRestore aria-hidden="true" />
-          <span>
-            <strong>Dežurna služba: {contact.displayPhone}</strong>
-            <small>{contact.availability}</small>
-          </span>
-          <ExternalLink aria-hidden="true" />
-        </a>
       </section>
-
       <section className="settings-section danger-zone">
         <h2>Brisanje</h2>
-        <button type="button" onClick={clear}>
-          <Trash2 aria-hidden="true" />
+        <button
+          type="button"
+          onClick={async () => {
+            if (window.confirm('Izbrisati sve zapise sna i obroka?')) await onClear()
+          }}
+        >
+          <Trash2 />
           <span>
             <strong>Izbriši sve podatke</strong>
-            <small>Profil, spavanje, bočice i završene provjere</small>
+            <small>Profil, san i obroci</small>
           </span>
         </button>
       </section>
       <footer className="settings-footer">
-        <strong>BabyCheck 0.1.0</strong>
-        <span>Ne postavlja dijagnozu · Za životnu ugroženost nazovite 112</span>
-        <small>{nowIso().slice(0, 10)}</small>
+        <strong>BabyCheck 0.2.0</strong>
+        <span>Procjena ritma, ne medicinski raspored</span>
       </footer>
     </main>
   )
+}
+
+function ReminderToggle({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  disabled: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <label className="settings-toggle">
+      <span>
+        <strong>{label}</strong>
+        <small>
+          {disabled ? 'Prvo dopustite obavijesti' : checked ? 'Uključeno' : 'Isključeno'}
+        </small>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  )
+}
+
+function permissionTitle(permission: AppSettings['notificationPermission']): string {
+  if (permission === 'granted') return 'Obavijesti su dopuštene'
+  if (permission === 'denied') return 'Obavijesti su blokirane u postavkama uređaja'
+  if (permission === 'unsupported') return 'Ovaj preglednik ne podržava obavijesti'
+  return 'Obavijesti nisu uključene'
 }

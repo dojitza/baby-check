@@ -1,37 +1,23 @@
-# BabyCheck product specification
+# BabyCheck 0.2 product specification
 
 ## Goal
 
-BabyCheck helps a caregiver record sleep and bottle events quickly, then walks through an explainable order of checks when a baby is unsettled. It does not determine or diagnose the cause.
+Answer three questions with minimal interaction:
 
-## Audience and locale
+1. How long has the baby been awake or asleep?
+2. How much has the baby slept in the last 24 hours?
+3. Based on personal logs, when may sleep or another meal be likely?
 
-- Croatian interface.
-- Danish official guidance and Danish regional medical contacts.
-- One baby, one browser profile, birth through 24 months.
+## Product boundaries
 
-## MVP flows
+- Croatian UI, one baby, birth through 24 months.
+- Only sleep and meals are tracked.
+- No fussy-cause checklist, diagnosis, prepared-bottle lifecycle, caregiver synchronization, or remote AI.
+- Age selects a general Danish 24-hour sleep range only.
+- Exact timing requires five personal wake or meal intervals.
+- Responsive feeding and observed cues override estimates.
+- Reminders are permission-gated and frontend-only best effort.
 
-1. Onboarding: optional nickname, birth date, optional due date/prematurity, Danish region, bottle kinds, informed limitation acknowledgement.
-2. Today: current age and sleep/awake status, last bottle, active bottle warning, quick entry, fussy checklist.
-3. Sleep: start/stop now or add a completed interval; reject future, inverted, and overlapping intervals.
-4. Bottle: completed feeding or prepared bottle, milk kind, amount, preparation/storage state, timestamps.
-5. Fussy session: urgent review first; bottle safety; data-supported tired/hunger; manual routine checks; professional care and caregiver safety.
-6. History: editable/deletable local timeline.
-7. Settings: theme, storage status, backup/restore/delete, guidance sources and contacts.
+## Data migration
 
-## Algorithm boundaries
-
-- Fixed safety lanes always outrank heuristic suggestions.
-- Personal patterns require at least five usable observations.
-- Previous “helped” outcomes require at least three occurrences and only provide a bounded tie-break boost.
-- No remote AI, cry recording, diagnosis, or confidence percentage.
-- Danish guidance does not establish exact wake windows; BabyCheck labels personal awake patterns as observations rather than medical limits.
-
-## Privacy
-
-All baby records are stored in IndexedDB on the device. BabyCheck makes no runtime API calls and includes no analytics. GitHub Pages may log ordinary visitor network metadata such as IP address while serving static application files. Exports are unencrypted JSON and should be handled as private files.
-
-## Non-goals
-
-Caregiver synchronization, accounts, multiple babies, breastfeeding/solid/nappy diaries, guaranteed background alarms, app-store packaging, and medical-device certification are outside the MVP.
+Schema v2 converts completed schema-v1 bottle feeds into bottle meals. Prepared, feeding, and discarded bottles are not converted because they are not completed meals. Old fussy sessions are intentionally removed from the active schema. Backup import accepts v1 and converts it to v2 before writing.

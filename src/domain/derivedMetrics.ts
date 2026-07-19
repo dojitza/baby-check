@@ -1,5 +1,5 @@
-import type { BabyProfile, BottleEntry, DerivedMetrics, SleepEntry } from './types'
 import { ageInDays, differenceInMinutes, median } from '../utils/dateTime'
+import type { BabyProfile, DerivedMetrics, MealEntry, SleepEntry } from './types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const TWO_WEEKS_MS = 14 * DAY_MS
@@ -8,14 +8,15 @@ const MIN_PERSONAL_SAMPLES = 5
 export function calculateDerivedMetrics(
   profile: BabyProfile,
   sleepEntries: SleepEntry[],
-  bottleEntries: BottleEntry[],
+  mealEntries: MealEntry[],
   now = new Date(),
 ): DerivedMetrics {
   const sortedSleep = [...sleepEntries].sort(
     (a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime(),
   )
-  const sortedBottles = [...bottleEntries].sort((a, b) => bottleEventTime(b) - bottleEventTime(a))
-
+  const sortedMeals = [...mealEntries].sort(
+    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+  )
   const currentSleep = sortedSleep.find((entry) => !entry.endAt)
   const latestEndedSleep = sortedSleep.find((entry) => entry.endAt)
   const awakeSince = currentSleep ? undefined : latestEndedSleep?.endAt
@@ -24,50 +25,36 @@ export function calculateDerivedMetrics(
   const recentSleep = sortedSleep.filter(
     (entry) => new Date(entry.startAt).getTime() >= now.getTime() - TWO_WEEKS_MS,
   )
-  const wakeDurations = calculateWakeDurations(recentSleep)
-  const personalWakeDurations = wakeDurations.slice(0, 20)
-
-  const completedBottles = sortedBottles.filter(
-    (entry) => entry.status === 'finished' && entry.feedingStartedAt,
+  const wakeDurations = calculateWakeDurations(recentSleep).slice(0, 20)
+  const recentMeals = sortedMeals.filter(
+    (entry) => new Date(entry.at).getTime() >= now.getTime() - TWO_WEEKS_MS,
   )
-  const recentCompletedBottles = completedBottles.filter(
-    (entry) => bottleEventTime(entry) >= now.getTime() - TWO_WEEKS_MS,
-  )
-  const bottleIntervals = calculateBottleIntervals(recentCompletedBottles)
-  const lastBottle = completedBottles[0]
-  const lastBottleTime = lastBottle?.feedingStartedAt ?? lastBottle?.finishedAt
+  const mealIntervals = calculateMealIntervals(recentMeals)
+  const lastMeal = sortedMeals[0]
 
   return {
     ageDays: ageInDays(now, profile.birthDate),
-    correctedAgeDays: profile.dueDate
-      ? ageInDays(now, profile.dueDate)
-      : ageInDays(now, profile.birthDate),
+    correctedAgeDays: ageInDays(now, profile.dueDate ?? profile.birthDate),
     isSleeping: Boolean(currentSleep),
     awakeSince,
     awakeMinutes,
     currentSleepStartedAt: currentSleep?.startAt,
     sleepMinutes24h: calculateSleepMinutesInWindow(sortedSleep, now, DAY_MS),
-    recentWakeDurations: personalWakeDurations,
+    recentWakeDurations: wakeDurations,
     usualWakeMedianMinutes:
-      personalWakeDurations.length >= MIN_PERSONAL_SAMPLES ? median(personalWakeDurations) : null,
-    lastBottle,
-    lastBottleMinutesAgo: lastBottleTime
-      ? differenceInMinutes(now, new Date(lastBottleTime))
-      : null,
-    recentBottleIntervals: bottleIntervals,
-    usualBottleIntervalMinutes:
-      bottleIntervals.length >= MIN_PERSONAL_SAMPLES ? median(bottleIntervals) : null,
-    recentBottleAmounts: recentCompletedBottles
-      .map((entry) => entry.consumedMl ?? entry.offeredMl)
-      .filter((amount) => amount > 0)
-      .slice(0, 20),
-    activeBottles: sortedBottles.filter(
-      (entry) => entry.status === 'prepared' || entry.status === 'feeding',
-    ),
+      wakeDurations.length >= MIN_PERSONAL_SAMPLES ? median(wakeDurations) : null,
+    lastSleep: sortedSleep[0],
+    lastMeal,
+    lastMealMinutesAgo: lastMeal ? differenceInMinutes(now, new Date(lastMeal.at)) : null,
+    recentMealIntervals: mealIntervals,
+    usualMealIntervalMinutes:
+      mealIntervals.length >= MIN_PERSONAL_SAMPLES ? median(mealIntervals) : null,
+    meals24h: sortedMeals.filter((entry) => new Date(entry.at).getTime() >= now.getTime() - DAY_MS)
+      .length,
   }
 }
 
-function calculateSleepMinutesInWindow(
+export function calculateSleepMinutesInWindow(
   sleepEntries: SleepEntry[],
   now: Date,
   windowMs: number,
@@ -79,8 +66,7 @@ function calculateSleepMinutesInWindow(
       entry.endAt ? new Date(entry.endAt).getTime() : now.getTime(),
       now.getTime(),
     )
-    if (end <= start) return sum
-    return sum + Math.round((end - start) / 60_000)
+    return end > start ? sum + Math.round((end - start) / 60_000) : sum
   }, 0)
 }
 
@@ -88,30 +74,25 @@ function calculateWakeDurations(entries: SleepEntry[]): number[] {
   const ascending = [...entries]
     .filter((entry) => entry.endAt)
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-
   const durations: number[] = []
   for (let index = 0; index < ascending.length - 1; index += 1) {
     const awakeAt = ascending[index].endAt
-    const nextSleepAt = ascending[index + 1].startAt
     if (!awakeAt) continue
-    const duration = differenceInMinutes(new Date(nextSleepAt), new Date(awakeAt))
+    const duration = differenceInMinutes(new Date(ascending[index + 1].startAt), new Date(awakeAt))
     if (duration > 0 && duration < 12 * 60) durations.push(duration)
   }
   return durations.reverse()
 }
 
-function calculateBottleIntervals(entries: BottleEntry[]): number[] {
-  const ascending = [...entries].sort((a, b) => bottleEventTime(a) - bottleEventTime(b))
+function calculateMealIntervals(entries: MealEntry[]): number[] {
+  const ascending = [...entries].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
   const intervals: number[] = []
   for (let index = 1; index < ascending.length; index += 1) {
-    const interval = Math.round(
-      (bottleEventTime(ascending[index]) - bottleEventTime(ascending[index - 1])) / 60_000,
+    const interval = differenceInMinutes(
+      new Date(ascending[index].at),
+      new Date(ascending[index - 1].at),
     )
     if (interval > 0 && interval < 24 * 60) intervals.push(interval)
   }
   return intervals.reverse().slice(0, 20)
-}
-
-function bottleEventTime(entry: BottleEntry): number {
-  return new Date(entry.feedingStartedAt ?? entry.finishedAt ?? entry.preparedAt).getTime()
 }

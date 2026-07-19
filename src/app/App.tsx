@@ -2,22 +2,25 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Baby, History, Home, Settings as SettingsIcon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRegisterSW } from 'virtual:pwa-register/react'
-import { db, clearDatabase, exportDatabase, importDatabase, validateBackup } from '../db/database'
+import { clearDatabase, db, exportDatabase, importDatabase, validateBackup } from '../db/database'
 import { calculateDerivedMetrics } from '../domain/derivedMetrics'
-import { evaluateFussyChecks } from '../domain/fussy/evaluateFussyChecks'
-import type { BottleEntry, FussySession, SleepEntry, ThemePreference } from '../domain/types'
-import { nowIso } from '../utils/dateTime'
-import { BottleForm } from '../features/BottleForm'
+import { evaluateRhythm } from '../domain/rhythm/evaluateRhythm'
+import type { MealEntry, ReminderKind, SleepEntry, ThemePreference } from '../domain/types'
 import { Dashboard } from '../features/Dashboard'
-import { FussyFlow } from '../features/FussyFlow'
 import { HistoryScreen } from '../features/HistoryScreen'
+import { MealForm } from '../features/MealForm'
 import { Onboarding } from '../features/Onboarding'
 import { SettingsScreen } from '../features/SettingsScreen'
 import { SleepForm } from '../features/SleepForm'
-import { UrgentHelp } from '../features/UrgentHelp'
+import {
+  requestNotificationPermission,
+  showDueReminder,
+  updateAppBadge,
+} from '../notifications/reminders'
+import { nowIso } from '../utils/dateTime'
 
 export type Route = 'today' | 'history' | 'settings'
-type Overlay = 'sleep' | 'bottle' | 'fussy' | 'urgent' | null
+type Overlay = 'sleep' | 'meal' | null
 
 function routeFromHash(): Route {
   const value = window.location.hash.replace('#/', '')
@@ -31,32 +34,29 @@ export function App() {
     () => db.sleepEntries.orderBy('startAt').reverse().toArray(),
     [],
   )
-  const bottleEntries = useLiveQuery(
-    () => db.bottleEntries.orderBy('preparedAt').reverse().toArray(),
-    [],
-  )
-  const fussySessions = useLiveQuery(
-    () => db.fussySessions.orderBy('startedAt').reverse().toArray(),
-    [],
-  )
+  const mealEntries = useLiveQuery(() => db.mealEntries.orderBy('at').reverse().toArray(), [])
   const [route, setRoute] = useState<Route>(routeFromHash)
   const [overlay, setOverlay] = useState<Overlay>(null)
-  const [urgentOverFussy, setUrgentOverFussy] = useState(false)
-  const [editingSleep, setEditingSleep] = useState<SleepEntry | undefined>()
+  const [editingSleep, setEditingSleep] = useState<SleepEntry>()
+  const [editingMeal, setEditingMeal] = useState<MealEntry>()
   const [now, setNow] = useState(() => new Date())
-
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW()
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000)
-    const onHash = () => setRoute(routeFromHash())
-    window.addEventListener('hashchange', onHash)
+    const refresh = () => setNow(new Date())
+    const timer = window.setInterval(refresh, 30_000)
+    const hash = () => setRoute(routeFromHash())
+    window.addEventListener('hashchange', hash)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       window.clearInterval(timer)
-      window.removeEventListener('hashchange', onHash)
+      window.removeEventListener('hashchange', hash)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [])
 
@@ -64,39 +64,51 @@ export function App() {
     if (!settings) return
     const dark =
       settings.theme === 'dark' ||
-      (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      (settings.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   }, [settings])
 
   const metrics = useMemo(
     () =>
-      profile
-        ? calculateDerivedMetrics(profile, sleepEntries ?? [], bottleEntries ?? [], now)
-        : null,
-    [profile, sleepEntries, bottleEntries, now],
+      profile ? calculateDerivedMetrics(profile, sleepEntries ?? [], mealEntries ?? [], now) : null,
+    [profile, sleepEntries, mealEntries, now],
   )
-  const recommendations = useMemo(
-    () =>
-      profile && metrics ? evaluateFussyChecks(profile, metrics, fussySessions ?? [], now) : [],
-    [profile, metrics, fussySessions, now],
-  )
+  const rhythm = useMemo(() => (metrics ? evaluateRhythm(metrics) : null), [metrics])
+
+  useEffect(() => {
+    if (!settings || !rhythm) return
+    const currentSettings = settings
+    const currentRhythm = rhythm
+    void updateAppBadge(currentRhythm)
+    async function notify() {
+      for (const estimate of [currentRhythm.sleep, currentRhythm.meal]) {
+        const key = await showDueReminder(estimate, currentSettings)
+        if (key)
+          await db.settings.update(
+            'settings',
+            estimate.kind === 'sleep'
+              ? { lastSleepReminderKey: key, updatedAt: nowIso() }
+              : { lastMealReminderKey: key, updatedAt: nowIso() },
+          )
+      }
+    }
+    void notify()
+  }, [settings, rhythm])
 
   const navigate = useCallback((next: Route) => {
-    window.location.hash = `/${next}`
+    location.hash = `/${next}`
     setRoute(next)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
-  if (sleepEntries === undefined || bottleEntries === undefined || fussySessions === undefined) {
+  if (sleepEntries === undefined || mealEntries === undefined)
     return (
       <div className="app-loading">
-        <Baby aria-hidden="true" />
+        <Baby />
         <span>Učitavanje lokalnih podataka…</span>
       </div>
     )
-  }
-
-  if (!profile || !settings?.onboardingCompleted) {
+  if (!profile || !settings?.onboardingCompleted)
     return (
       <Onboarding
         onComplete={async (newProfile, newSettings) => {
@@ -104,21 +116,20 @@ export function App() {
             await db.profiles.put(newProfile)
             await db.settings.put(newSettings)
           })
-          const [savedProfile, savedSettings] = await Promise.all([
-            db.profiles.get('primary'),
-            db.settings.get('settings'),
-          ])
-          if (!savedProfile || !savedSettings?.onboardingCompleted) {
-            throw new Error('Local profile verification failed')
-          }
         }}
       />
     )
-  }
-
-  if (!metrics) return null
-
+  if (!metrics || !rhythm) return null
   const openSleep = sleepEntries.find((entry) => !entry.endAt)
+
+  async function updateReminder(kind: ReminderKind, enabled: boolean) {
+    await db.settings.update(
+      'settings',
+      kind === 'sleep'
+        ? { sleepRemindersEnabled: enabled, updatedAt: nowIso() }
+        : { mealRemindersEnabled: enabled, updatedAt: nowIso() },
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -126,37 +137,37 @@ export function App() {
         <Dashboard
           profile={profile}
           metrics={metrics}
+          rhythm={rhythm}
           now={now}
           onSleep={() => {
             setEditingSleep(openSleep)
             setOverlay('sleep')
           }}
-          onBottle={() => setOverlay('bottle')}
-          onFussy={() => setOverlay('fussy')}
+          onMeal={() => {
+            setEditingMeal(undefined)
+            setOverlay('meal')
+          }}
           onHistory={() => navigate('history')}
-          onUrgentHelp={() => setOverlay('urgent')}
+          onSettings={() => navigate('settings')}
         />
       ) : null}
-
       {route === 'history' ? (
         <HistoryScreen
           sleepEntries={sleepEntries}
-          bottleEntries={bottleEntries}
-          fussySessions={fussySessions}
+          mealEntries={mealEntries}
           onBack={() => navigate('today')}
           onDeleteSleep={(id) => db.sleepEntries.delete(id)}
-          onDeleteBottle={(id) => db.bottleEntries.delete(id)}
-          onUpdateBottle={async (entry) => {
-            await db.bottleEntries.put(entry)
-          }}
-          onDeleteFussy={(id) => db.fussySessions.delete(id)}
+          onDeleteMeal={(id) => db.mealEntries.delete(id)}
           onEditSleep={(entry) => {
             setEditingSleep(entry)
             setOverlay('sleep')
           }}
+          onEditMeal={(entry) => {
+            setEditingMeal(entry)
+            setOverlay('meal')
+          }}
         />
       ) : null}
-
       {route === 'settings' ? (
         <SettingsScreen
           profile={profile}
@@ -164,6 +175,14 @@ export function App() {
           onBack={() => navigate('today')}
           onTheme={async (theme: ThemePreference) => {
             await db.settings.update('settings', { theme, updatedAt: nowIso() })
+          }}
+          onReminder={updateReminder}
+          onRequestNotifications={async () => {
+            const permission = await requestNotificationPermission()
+            await db.settings.update('settings', {
+              notificationPermission: permission,
+              updatedAt: nowIso(),
+            })
           }}
           onExport={async () => {
             const backup = await exportDatabase()
@@ -175,30 +194,19 @@ export function App() {
             document.body.append(anchor)
             anchor.click()
             anchor.remove()
-            window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
+            setTimeout(() => URL.revokeObjectURL(url), 1000)
             await db.settings.update('settings', { lastBackupAt: nowIso(), updatedAt: nowIso() })
           }}
           onImport={async (file) => {
             const backup = validateBackup(JSON.parse(await file.text()))
-            const localPersistence = settings.persistentStorage
-            await importDatabase({
-              ...backup,
-              data: {
-                ...backup.data,
-                settings: [
-                  {
-                    ...backup.data.settings[0],
-                    persistentStorage: localPersistence,
-                    updatedAt: nowIso(),
-                  },
-                ],
-              },
-            })
+            backup.data.settings[0].persistentStorage = settings.persistentStorage
+            backup.data.settings[0].notificationPermission = settings.notificationPermission
+            await importDatabase(backup)
           }}
           onClear={async () => {
             await clearDatabase()
-            window.location.hash = ''
-            window.location.reload()
+            location.hash = ''
+            location.reload()
           }}
         />
       ) : null}
@@ -207,32 +215,28 @@ export function App() {
         <button
           className={route === 'today' ? 'active' : ''}
           aria-current={route === 'today' ? 'page' : undefined}
-          type="button"
           onClick={() => navigate('today')}
         >
-          <Home aria-hidden="true" />
+          <Home />
           <span>Danas</span>
         </button>
         <button
           className={route === 'history' ? 'active' : ''}
           aria-current={route === 'history' ? 'page' : undefined}
-          type="button"
           onClick={() => navigate('history')}
         >
-          <History aria-hidden="true" />
+          <History />
           <span>Povijest</span>
         </button>
         <button
           className={route === 'settings' ? 'active' : ''}
           aria-current={route === 'settings' ? 'page' : undefined}
-          type="button"
           onClick={() => navigate('settings')}
         >
-          <SettingsIcon aria-hidden="true" />
+          <SettingsIcon />
           <span>Postavke</span>
         </button>
       </nav>
-
       {overlay === 'sleep' ? (
         <SleepForm
           openSleep={editingSleep}
@@ -246,46 +250,25 @@ export function App() {
           }}
         />
       ) : null}
-      {overlay === 'bottle' ? (
-        <BottleForm
-          profile={profile}
-          onSave={async (entry: BottleEntry) => {
-            await db.bottleEntries.put(entry)
+      {overlay === 'meal' ? (
+        <MealForm
+          entry={editingMeal}
+          onSave={async (entry) => {
+            await db.mealEntries.put(entry)
           }}
-          onClose={() => setOverlay(null)}
-        />
-      ) : null}
-      {overlay === 'fussy' ? (
-        <FussyFlow
-          profile={profile}
-          metrics={metrics}
-          recommendations={recommendations}
-          onSave={async (session: FussySession) => {
-            await db.fussySessions.put(session)
-          }}
-          onUrgentHelp={() => setUrgentOverFussy(true)}
           onClose={() => {
-            setUrgentOverFussy(false)
             setOverlay(null)
+            setEditingMeal(undefined)
           }}
         />
       ) : null}
-      {overlay === 'urgent' ? (
-        <UrgentHelp region={profile.region} onClose={() => setOverlay(null)} />
-      ) : null}
-      {urgentOverFussy ? (
-        <UrgentHelp region={profile.region} onClose={() => setUrgentOverFussy(false)} />
-      ) : null}
-
       {needRefresh ? (
         <aside className="update-toast" role="status">
           <div>
             <strong>Dostupna je nova verzija</strong>
-            <span>Podaci na uređaju ostat će sačuvani.</span>
+            <span>Zapisi ostaju sačuvani.</span>
           </div>
-          <button type="button" onClick={() => updateServiceWorker(true)}>
-            Ažuriraj
-          </button>
+          <button onClick={() => updateServiceWorker(true)}>Ažuriraj</button>
         </aside>
       ) : null}
     </div>

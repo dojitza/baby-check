@@ -7,14 +7,16 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'prompt',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         id: '/baby-check/',
-        name: 'BabyCheck — mirna provjera za bebu',
+        name: 'BabyCheck — ritam sna i obroka',
         short_name: 'BabyCheck',
-        description:
-          'Privatni lokalni dnevnik spavanja i bočica s redoslijedom provjera kada je beba nemirna.',
+        description: 'Privatni lokalni dnevnik sna i obroka s procjenom bebinog osobnog ritma.',
         lang: 'hr',
         start_url: '/baby-check/',
         scope: '/baby-check/',
@@ -44,10 +46,8 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
-        cleanupOutdatedCaches: true,
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
-        navigateFallback: '/baby-check/index.html',
       },
       devOptions: {
         enabled: true,

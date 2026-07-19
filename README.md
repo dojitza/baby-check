@@ -1,84 +1,40 @@
 # BabyCheck
 
-BabyCheck is a Croatian-language, mobile-first, local-only PWA for caregivers in Denmark. It records sleep and bottle events and provides a transparent order of checks when a baby is unsettled.
+BabyCheck is a Croatian-language, local-first PWA for tracking a baby's **sleep and meals**. It shows broad Danish age-based daily sleep guidance and learns likely next sleep/meal timing from the baby's own recent records.
 
-BabyCheck does **not** know or diagnose why a baby is crying. It keeps urgent warning signs above all heuristics and links medical-adjacent wording to official Danish sources.
+## What it does
 
-## Features
+- One-tap sleep start/wake plus editable manual intervals.
+- Simple meals: breastfeeding, bottle, or solids; optional ml, duration, and notes.
+- Rolling sleep total for the last 24 hours.
+- Danish general sleep bands: 0–3 months 14–17 h, 4–11 months 12–15 h, and 1–2 years 11–14 h, including naps.
+- Personal wake and meal estimates after at least five usable intervals.
+- Best-effort in-app, badge, and OS reminders while the PWA is active.
+- IndexedDB persistence, schema-v1 bottle-to-meal migration, and v1/v2 JSON backup import.
+- Offline installation, dark mode, no account, backend, analytics, advertisements, or runtime third-party requests.
 
-- One local baby profile, including chronological and optional corrected age.
-- One-tap and manual sleep recording with overlap protection.
-- Powdered formula, ready-to-feed formula and expressed-milk bottle records.
-- Conservative, source-versioned active-bottle checks.
-- Explainable fussy checklist using fixed safety lanes and personal patterns only after enough observations.
-- Danish regional out-of-hours contacts and direct `112` action.
-- IndexedDB persistence, persistent-storage request and validated JSON backup/restore.
-- Offline service worker, installable manifest, iOS safe areas and dark mode.
-- No account, backend, analytics, remote fonts, advertisements or runtime API requests.
+## Important limitations
 
-## Technology
+Danish official guidance does not define exact age-based wake windows. BabyCheck never labels a wake deadline as an official Danish recommendation. Timing estimates are medians from the baby's own logs and are not medical deadlines. Sleep and hunger cues take priority.
 
-- React 19, TypeScript and Vite.
-- Dexie/IndexedDB for local records.
-- Zod for backup validation.
-- `vite-plugin-pwa` and Workbox for installation and offline use.
-- Vitest and Playwright for deterministic domain and mobile browser tests.
+A frontend-only PWA cannot reliably wake itself at an exact time while fully closed. Notifications require explicit permission and are best effort while the app is active or resumed. Reliable closed-app Web Push would require backend scheduling and storage of push subscriptions, which this private local-only release deliberately avoids.
 
-## Local development
+## Development
 
-Requirements: Node 22.12 or newer and npm.
-
-1. Install dependencies with `npm ci`.
-2. Start development with `npm run dev`.
-3. Open `http://localhost:5173/baby-check/`.
-
-Quality commands:
-
-- `npm run format:check`
-- `npm run lint`
-- `npm run typecheck`
-- `npm run test`
-- `npm run build`
-- `npm run test:e2e`
+- `npm ci`
+- `npm run dev`
 - `npm run check`
+- `npm run test:e2e`
 
-Install Playwright engines once with `npx playwright install chromium webkit`.
+Production: `https://kotarski.dev/baby-check/`
 
 ## Architecture
 
-- `src/db/` — versioned IndexedDB schema and backup/restore.
-- `src/domain/` — pure age, sleep, bottle-safety and fussy-ranking logic.
-- `src/content/` — Croatian labels, Danish official sources and regional contacts.
-- `src/features/` — onboarding, dashboard, entry forms, checklist, history and settings.
-- `src/styles/` — mobile-first design tokens and component styles.
-- `tests/` — deterministic unit tests.
-- `e2e/` — mobile Chromium and WebKit user flows.
-- `docs/guidance-sources.md` — source conflicts, encoded rules and re-review process.
+- `src/domain/rhythm/` — pure sleep/meal estimate logic.
+- `src/db/` — Dexie schema v2, legacy migration, backup import/export.
+- `src/notifications/` — permission, deduplication, foreground notification and badge logic.
+- `src/features/` — onboarding, dashboard, sleep/meal entry, history, settings.
 
-## Privacy and storage
+Baby data remains in the current browser's IndexedDB. Exported backups are unencrypted private JSON files.
 
-Baby records remain in IndexedDB on the current device. Clearing website data, uninstalling the PWA or browser storage pressure can remove records. The app requests persistent storage but browsers may decline. Exported JSON backups are not encrypted and should be treated as private files.
-
-GitHub Pages serves the static application and may log ordinary request metadata, including visitor IP addresses. BabyCheck itself sends no baby records and embeds no third-party resources.
-
-## Medical-adjacent limitations
-
-The checklist uses deterministic rules, not an LLM or a diagnostic model. It does not calculate a medical probability. A sentence such as “awake longer than the recent personal median” describes only recorded history.
-
-For life-threatening illness or injury in Denmark, call `112`. Persistent, unusual or concerning crying and signs of illness require professional assessment. See `docs/guidance-sources.md` for source mapping and review dates.
-
-## Deployment
-
-The application is built for the `/baby-check/` subpath and deployed to GitHub Pages by `.github/workflows/deploy-pages.yml` after the quality workflow passes on `main`.
-
-Production URL: `https://kotarski.dev/baby-check/`. GitHub's standard
-`https://dojitza.github.io/baby-check/` address redirects there because this
-account already has the verified `kotarski.dev` Pages domain.
-
-Repository Settings → Pages must use **GitHub Actions** as the source. A public repository is required on GitHub Free.
-
-To roll back, revert `main` to a known-good commit and let the Pages workflow redeploy. Static deploys do not intentionally clear client IndexedDB, but schema migrations must remain backward safe.
-
-## License
-
-MIT. Health guidance remains attributable to its original publishers and is paraphrased in the interface.
+MIT licensed.

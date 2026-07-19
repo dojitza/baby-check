@@ -1,57 +1,37 @@
-import {
-  AlertTriangle,
-  Baby,
-  ChevronRight,
-  Clock3,
-  HelpCircle,
-  History,
-  Milk,
-  Moon,
-  Plus,
-  ShieldAlert,
-  Sparkles,
-  Sun,
-} from 'lucide-react'
+import { Baby, Bell, ChevronRight, Clock3, History, Milk, Moon, Plus, Sun } from 'lucide-react'
 import { BabyCheckMark } from '../components/Icons'
-import { bottleKindLabels } from '../content/hr'
-import { evaluateActiveBottles } from '../domain/bottles/evaluateBottleSafety'
-import type { BabyProfile, DerivedMetrics } from '../domain/types'
+import { mealKindLabels } from '../content/meals'
+import type { BabyProfile, DerivedMetrics, NextEventEstimate, RhythmSummary } from '../domain/types'
 import { formatAge, formatClock, formatDuration } from '../utils/dateTime'
 
 interface DashboardProps {
   profile: BabyProfile
   metrics: DerivedMetrics
+  rhythm: RhythmSummary
   now: Date
   onSleep: () => void
-  onBottle: () => void
-  onFussy: () => void
+  onMeal: () => void
   onHistory: () => void
-  onUrgentHelp: () => void
+  onSettings: () => void
 }
 
 export function Dashboard({
   profile,
   metrics,
+  rhythm,
   now,
   onSleep,
-  onBottle,
-  onFussy,
+  onMeal,
   onHistory,
-  onUrgentHelp,
+  onSettings,
 }: DashboardProps) {
-  const activeWarning = evaluateActiveBottles(metrics.activeBottles, profile, now).find(
-    ({ result }) => result.state !== 'safe',
-  )
-
-  const babyName = profile.nickname || 'Vaša beba'
-  const currentDuration = metrics.isSleeping
-    ? metrics.currentSleepStartedAt
-      ? Math.max(
-          0,
-          Math.round((now.getTime() - new Date(metrics.currentSleepStartedAt).getTime()) / 60_000),
-        )
-      : null
-    : metrics.awakeMinutes
+  const currentDuration =
+    metrics.isSleeping && metrics.currentSleepStartedAt
+      ? Math.round((now.getTime() - new Date(metrics.currentSleepStartedAt).getTime()) / 60_000)
+      : metrics.awakeMinutes
+  const targetMidpoint =
+    (rhythm.guidance.recommendedMinMinutes + rhythm.guidance.recommendedMaxMinutes) / 2
+  const sleepProgress = Math.min(100, Math.round((metrics.sleepMinutes24h / targetMidpoint) * 100))
 
   return (
     <main className="screen dashboard-screen">
@@ -65,13 +45,12 @@ export function Dashboard({
         <button
           className="status-avatar"
           type="button"
-          onClick={onUrgentHelp}
-          aria-label="Otvori znakove za hitnu pomoć"
+          onClick={onSettings}
+          aria-label="Postavke obavijesti"
         >
-          <ShieldAlert aria-hidden="true" />
+          <Bell aria-hidden="true" />
         </button>
       </header>
-
       <section className="greeting">
         <p>
           {new Intl.DateTimeFormat('hr-HR', {
@@ -80,7 +59,7 @@ export function Dashboard({
             month: 'long',
           }).format(now)}
         </p>
-        <h1>Kako je {babyName}?</h1>
+        <h1>{profile.nickname || 'Beba'} danas</h1>
         <span>
           <Baby aria-hidden="true" /> {formatAge(metrics.correctedAgeDays)}
           {profile.dueDate ? ' korigirane dobi' : ''}
@@ -95,32 +74,52 @@ export function Dashboard({
           <p>{metrics.isSleeping ? 'TRENUTAČNO SPAVA' : 'TRENUTAČNO JE BUDNA'}</p>
           <strong>{formatDuration(currentDuration)}</strong>
           <span>
-            {metrics.isSleeping
-              ? metrics.currentSleepStartedAt
-                ? `od ${formatClock(metrics.currentSleepStartedAt)}`
-                : 'vrijeme početka nije poznato'
+            {metrics.isSleeping && metrics.currentSleepStartedAt
+              ? `od ${formatClock(metrics.currentSleepStartedAt)}`
               : metrics.awakeSince
                 ? `od ${formatClock(metrics.awakeSince)}`
                 : 'dodajte prvi zapis spavanja'}
           </span>
         </div>
         <button className="state-card__action" type="button" onClick={onSleep}>
-          {metrics.isSleeping ? 'Budna je' : 'Spava'} <ChevronRight aria-hidden="true" />
+          {metrics.isSleeping ? 'Beba se probudila' : 'Beba je zaspala'}{' '}
+          <ChevronRight aria-hidden="true" />
         </button>
       </section>
 
-      {activeWarning ? (
-        <section className={`bottle-alert bottle-alert--${activeWarning.result.state}`}>
-          <AlertTriangle aria-hidden="true" />
+      <section className="rhythm-section">
+        <div className="section-heading">
           <div>
-            <strong>Aktivna bočica</strong>
-            <span>{activeWarning.result.label}</span>
+            <p>ŠTO JE VJEROJATNO SLJEDEĆE?</p>
+            <h2>Osobni ritam</h2>
           </div>
-          <button type="button" onClick={onHistory}>
-            Detalji
-          </button>
-        </section>
-      ) : null}
+        </div>
+        <div className="rhythm-grid">
+          <RhythmCard estimate={rhythm.sleep} icon={<Moon />} onAction={onSleep} />
+          <RhythmCard estimate={rhythm.meal} icon={<Milk />} onAction={onMeal} />
+        </div>
+      </section>
+
+      <section className="sleep-guidance-card">
+        <div className="sleep-guidance-header">
+          <div>
+            <small>SAN U ZADNJA 24 SATA</small>
+            <strong>{formatDuration(metrics.sleepMinutes24h)}</strong>
+          </div>
+          <span>{sleepProgress}%</span>
+        </div>
+        <div className="sleep-progress">
+          <i style={{ width: `${sleepProgress}%` }} />
+        </div>
+        <p>
+          Danski opći raspon za ovu dob:{' '}
+          <strong>
+            {formatDuration(rhythm.guidance.recommendedMinMinutes)}–
+            {formatDuration(rhythm.guidance.recommendedMaxMinutes)}
+          </strong>
+          , uključujući drijemanje. Važan je i dojam odmorenosti.
+        </p>
+      </section>
 
       <section className="quick-section">
         <div className="section-heading">
@@ -134,16 +133,16 @@ export function Dashboard({
             <span>
               <Moon aria-hidden="true" />
             </span>
-            <strong>{metrics.isSleeping ? 'Probudi' : 'Spavanje'}</strong>
-            <small>{metrics.isSleeping ? 'završi zapis' : 'pokreni ili unesi'}</small>
+            <strong>{metrics.isSleeping ? 'Buđenje' : 'Spavanje'}</strong>
+            <small>jedan dodir ili ručni unos</small>
             <Plus aria-hidden="true" />
           </button>
-          <button className="quick-card quick-card--bottle" type="button" onClick={onBottle}>
+          <button className="quick-card quick-card--bottle" type="button" onClick={onMeal}>
             <span>
               <Milk aria-hidden="true" />
             </span>
-            <strong>Bočica</strong>
-            <small>hranjenje ili priprema</small>
+            <strong>Obrok</strong>
+            <small>dojenje, bočica ili kruta hrana</small>
             <Plus aria-hidden="true" />
           </button>
         </div>
@@ -152,8 +151,8 @@ export function Dashboard({
       <section className="last-events">
         <div className="section-heading">
           <div>
-            <p>DANAS</p>
-            <h2>Posljednje</h2>
+            <p>ZADNJI ZAPISI</p>
+            <h2>San i obroci</h2>
           </div>
           <button type="button" onClick={onHistory}>
             Sve <History aria-hidden="true" />
@@ -165,13 +164,13 @@ export function Dashboard({
               <Clock3 aria-hidden="true" />
             </span>
             <div>
-              <small>San u 24 sata</small>
-              <strong>{formatDuration(metrics.sleepMinutes24h)}</strong>
-              <p>
-                {metrics.recentWakeDurations.length >= 5
-                  ? 'Osobni obrazac spreman'
-                  : `${metrics.recentWakeDurations.length}/5 budnih razdoblja za osobni obrazac`}
-              </p>
+              <small>Budni ritam</small>
+              <strong>
+                {metrics.usualWakeMedianMinutes
+                  ? formatDuration(metrics.usualWakeMedianMinutes)
+                  : 'Još učimo'}
+              </strong>
+              <p>{metrics.recentWakeDurations.length}/5 potrebnih razmaka</p>
             </div>
           </article>
           <article>
@@ -179,38 +178,53 @@ export function Dashboard({
               <Milk aria-hidden="true" />
             </span>
             <div>
-              <small>Zadnja bočica</small>
+              <small>Zadnji obrok</small>
               <strong>
-                {metrics.lastBottle
-                  ? `${metrics.lastBottle.consumedMl ?? metrics.lastBottle.offeredMl} ml`
-                  : 'Nije unesena'}
+                {metrics.lastMeal ? mealKindLabels[metrics.lastMeal.kind] : 'Nije unesen'}
               </strong>
               <p>
-                {metrics.lastBottle
-                  ? `${bottleKindLabels[metrics.lastBottle.kind]} · prije ${formatDuration(metrics.lastBottleMinutesAgo)}`
-                  : 'Dodajte prvi zapis hranjenja'}
+                {metrics.lastMeal
+                  ? `prije ${formatDuration(metrics.lastMealMinutesAgo)}${metrics.lastMeal.amountMl ? ` · ${metrics.lastMeal.amountMl} ml` : ''}`
+                  : 'Dodajte prvi obrok'}
               </p>
             </div>
           </article>
         </div>
       </section>
-
-      <section className="fussy-callout">
-        <div className="fussy-callout__art" aria-hidden="true">
-          <Sparkles />
-          <HelpCircle />
-          <BabyCheckMark />
-        </div>
-        <div>
-          <p>TREBA VAM MIRAN PLAN?</p>
-          <h2>Beba je nemirna</h2>
-          <span>Prođite najvažnije provjere redom, uz objašnjenje iz vaših zapisa.</span>
-        </div>
-        <button className="button button--light button--large" type="button" onClick={onFussy}>
-          Započni provjeru <ChevronRight aria-hidden="true" />
-        </button>
-        <small>Ne postavlja dijagnozu · Za hitnu pomoć nazovite 112</small>
-      </section>
+      <p className="medical-disclaimer">
+        Procjene su pomoć za praćenje, ne medicinski rok ili dijagnoza.
+      </p>
     </main>
+  )
+}
+
+function RhythmCard({
+  estimate,
+  icon,
+  onAction,
+}: {
+  estimate: NextEventEstimate
+  icon: React.ReactNode
+  onAction: () => void
+}) {
+  const countdown =
+    estimate.minutesUntilDue === undefined
+      ? null
+      : estimate.minutesUntilDue > 0
+        ? `za ${formatDuration(estimate.minutesUntilDue)}`
+        : estimate.minutesUntilDue === 0
+          ? 'sada'
+          : `kasni ${formatDuration(Math.abs(estimate.minutesUntilDue))}`
+  return (
+    <article className={`rhythm-card rhythm-card--${estimate.kind} rhythm-card--${estimate.state}`}>
+      <span className="rhythm-card__icon">{icon}</span>
+      <small>{estimate.kind === 'sleep' ? 'SAN' : 'OBROK'}</small>
+      <h3>{estimate.title}</h3>
+      {countdown ? <strong>{countdown}</strong> : null}
+      <p>{estimate.reason}</p>
+      <button type="button" onClick={onAction}>
+        {estimate.kind === 'sleep' ? 'Zabilježi san' : 'Zabilježi obrok'}
+      </button>
+    </article>
   )
 }

@@ -1,10 +1,10 @@
-import Dexie, { type EntityTable } from 'dexie'
+import Dexie, { type EntityTable, type Transaction } from 'dexie'
 import { z } from 'zod'
 import type {
   AppSettings,
   BabyProfile,
-  BottleEntry,
-  FussySession,
+  LegacyBottleEntry,
+  MealEntry,
   SleepEntry,
 } from '../domain/types'
 import { nowIso } from '../utils/dateTime'
@@ -13,8 +13,7 @@ class BabyCheckDatabase extends Dexie {
   profiles!: EntityTable<BabyProfile, 'id'>
   settings!: EntityTable<AppSettings, 'id'>
   sleepEntries!: EntityTable<SleepEntry, 'id'>
-  bottleEntries!: EntityTable<BottleEntry, 'id'>
-  fussySessions!: EntityTable<FussySession, 'id'>
+  mealEntries!: EntityTable<MealEntry, 'id'>
 
   constructor() {
     super('baby-check')
@@ -25,42 +24,80 @@ class BabyCheckDatabase extends Dexie {
       bottleEntries: 'id, kind, status, preparedAt, feedingStartedAt, finishedAt, updatedAt',
       fussySessions: 'id, startedAt, endedAt, resolved',
     })
+    this.version(2)
+      .stores({
+        profiles: 'id, birthDate, updatedAt',
+        settings: 'id, updatedAt',
+        sleepEntries: 'id, startAt, endAt, updatedAt',
+        mealEntries: 'id, kind, at, updatedAt',
+        bottleEntries: null,
+        fussySessions: null,
+      })
+      .upgrade(migrateVersionOne)
   }
 }
 
 export const db = new BabyCheckDatabase()
 
-export async function ensureDefaultSettings(): Promise<AppSettings> {
-  const existing = await db.settings.get('settings')
-  if (existing) return existing
+function defaultNotificationPermission(): AppSettings['notificationPermission'] {
+  return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+}
 
-  const timestamp = nowIso()
-  const settings: AppSettings = {
+export function defaultSettings(timestamp = nowIso()): AppSettings {
+  return {
     id: 'settings',
     onboardingCompleted: false,
     theme: 'system',
     persistentStorage: 'unknown',
+    sleepRemindersEnabled: false,
+    mealRemindersEnabled: false,
+    notificationPermission: defaultNotificationPermission(),
     createdAt: timestamp,
     updatedAt: timestamp,
   }
-  await db.settings.add(settings)
-  return settings
 }
 
-const categorySchema = z.enum([
-  'urgent',
-  'bottleSafety',
-  'tired',
-  'hungry',
-  'nappy',
-  'wind',
-  'temperature',
-  'contact',
-  'stimulation',
-  'discomfort',
-  'professionalCare',
-  'caregiverSafety',
-])
+async function migrateVersionOne(transaction: Transaction): Promise<void> {
+  const profiles = transaction.table('profiles')
+  const settingsTable = transaction.table('settings')
+  const bottlesTable = transaction.table('bottleEntries')
+  const mealsTable = transaction.table('mealEntries')
+  const legacyProfile = (await profiles.get('primary')) as Record<string, unknown> | undefined
+  if (legacyProfile) {
+    const profile = { ...legacyProfile }
+    delete profile.region
+    delete profile.bottleKinds
+    await profiles.put(profile)
+  }
+  const legacySettings = (await settingsTable.get('settings')) as
+    Record<string, unknown> | undefined
+  if (legacySettings) {
+    await settingsTable.put({
+      ...legacySettings,
+      sleepRemindersEnabled: false,
+      mealRemindersEnabled: false,
+      notificationPermission: 'default',
+    })
+  }
+  const bottles = (await bottlesTable.toArray()) as LegacyBottleEntry[]
+  const meals = bottles.flatMap(legacyBottleToMeal)
+  if (meals.length) await mealsTable.bulkPut(meals)
+}
+
+export function legacyBottleToMeal(bottle: LegacyBottleEntry): MealEntry[] {
+  if (bottle.status !== 'finished' || !bottle.feedingStartedAt) return []
+  return [
+    {
+      id: `meal-${bottle.id}`,
+      kind: 'bottle',
+      at: bottle.feedingStartedAt,
+      amountMl: bottle.consumedMl ?? bottle.offeredMl,
+      notes: bottle.notes,
+      createdAt: bottle.createdAt,
+      updatedAt: bottle.updatedAt,
+    },
+  ]
+}
 
 const profileSchema = z
   .object({
@@ -69,178 +106,160 @@ const profileSchema = z
     birthDate: z.iso.date(),
     dueDate: z.iso.date().optional(),
     premature: z.boolean(),
-    region: z.enum(['hovedstaden', 'sjaelland', 'syddanmark', 'midtjylland', 'nordjylland']),
-    bottleKinds: z.array(z.enum(['powderFormula', 'readyFormula', 'expressedMilk'])),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
-  .refine((profile) => !profile.dueDate || profile.premature, {
-    message: 'Due date requires premature profile',
-  })
-  .refine(
-    (profile) =>
-      !profile.dueDate ||
-      new Date(profile.dueDate).getTime() > new Date(profile.birthDate).getTime(),
-    { message: 'Due date must be after birth date' },
-  )
+  .refine((profile) => !profile.dueDate || profile.premature)
 
 const settingsSchema = z.object({
   id: z.literal('settings'),
   onboardingCompleted: z.boolean(),
   theme: z.enum(['system', 'light', 'dark']),
   persistentStorage: z.enum(['unknown', 'granted', 'notGranted']),
+  sleepRemindersEnabled: z.boolean(),
+  mealRemindersEnabled: z.boolean(),
+  notificationPermission: z.enum(['default', 'denied', 'granted', 'unsupported']),
+  lastSleepReminderKey: z.string().optional(),
+  lastMealReminderKey: z.string().optional(),
   lastBackupAt: z.iso.datetime().optional(),
-  lastGuidanceReviewAcknowledged: z.string().optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })
 
 const sleepSchema = z
   .object({
-    id: z.string(),
+    id: z.string().min(1),
     startAt: z.iso.datetime(),
     endAt: z.iso.datetime().optional(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
   })
-  .refine(
-    (entry) => !entry.endAt || new Date(entry.endAt).getTime() > new Date(entry.startAt).getTime(),
-    { message: 'Sleep must end after it starts' },
-  )
+  .refine((entry) => !entry.endAt || new Date(entry.endAt) > new Date(entry.startAt))
 
-const bottleSchema = z
-  .object({
-    id: z.string(),
-    kind: z.enum(['powderFormula', 'readyFormula', 'expressedMilk']),
-    status: z.enum(['prepared', 'feeding', 'finished', 'discarded']),
-    storage: z.enum(['fresh', 'fridge', 'roomTemperature']),
-    preparedAt: z.iso.datetime(),
-    feedingStartedAt: z.iso.datetime().optional(),
-    finishedAt: z.iso.datetime().optional(),
-    discardedAt: z.iso.datetime().optional(),
-    offeredMl: z.number().min(0).max(1000),
-    consumedMl: z.number().min(0).max(1000).optional(),
-    notes: z.string().max(500).optional(),
-    guidanceVersion: z.string(),
-    createdAt: z.iso.datetime(),
-    updatedAt: z.iso.datetime(),
-  })
-  .refine((entry) => entry.consumedMl === undefined || entry.consumedMl <= entry.offeredMl, {
-    message: 'Consumed amount exceeds offered amount',
-  })
-  .refine((entry) => entry.status !== 'feeding' || Boolean(entry.feedingStartedAt), {
-    message: 'Feeding bottle requires start time',
-  })
-  .refine((entry) => entry.status !== 'finished' || Boolean(entry.finishedAt), {
-    message: 'Finished bottle requires finish time',
-  })
-  .refine((entry) => entry.status !== 'discarded' || Boolean(entry.discardedAt), {
-    message: 'Discarded bottle requires discard time',
-  })
-
-const fussySessionSchema = z.object({
-  id: z.string(),
-  startedAt: z.iso.datetime(),
-  endedAt: z.iso.datetime().optional(),
-  resolved: z.boolean(),
-  resolvedBy: categorySchema.optional(),
-  recommendationOrder: z.array(categorySchema),
-  snapshot: z.object({
-    babyAgeDays: z.number(),
-    correctedAgeDays: z.number(),
-    awakeMinutes: z.number().nullable(),
-    lastBottleMinutesAgo: z.number().nullable(),
-    lastBottleMl: z.number().nullable(),
-    sleepMinutes24h: z.number(),
-    activeBottleIds: z.array(z.string()),
-  }),
-  results: z.array(
-    z.object({
-      category: categorySchema,
-      outcome: z.enum(['notIt', 'helped', 'skipped']),
-      completedAt: z.iso.datetime(),
-    }),
-  ),
+const mealSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(['breast', 'bottle', 'solids']),
+  at: z.iso.datetime(),
+  amountMl: z.number().positive().max(1000).optional(),
+  durationMinutes: z.number().positive().max(240).optional(),
+  notes: z.string().max(500).optional(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 })
 
-const backupSchema = z
-  .object({
-    app: z.literal('BabyCheck'),
-    schemaVersion: z.literal(1),
-    exportedAt: z.iso.datetime(),
-    data: z.object({
-      profiles: z.array(profileSchema).length(1),
-      settings: z.array(settingsSchema).length(1),
-      sleepEntries: z.array(sleepSchema),
-      bottleEntries: z.array(bottleSchema),
-      fussySessions: z.array(fussySessionSchema),
-    }),
-  })
-  .superRefine((backup, context) => {
-    const ids = new Set<string>()
-    const allRecords = [
-      ...backup.data.sleepEntries,
-      ...backup.data.bottleEntries,
-      ...backup.data.fussySessions,
-    ]
-    for (const record of allRecords) {
-      if (!record.id || ids.has(record.id)) {
-        context.addIssue({ code: 'custom', message: 'Record IDs must be unique and non-empty' })
-        break
-      }
-      ids.add(record.id)
-    }
+const backupV2Schema = z.object({
+  app: z.literal('BabyCheck'),
+  schemaVersion: z.literal(2),
+  exportedAt: z.iso.datetime(),
+  data: z.object({
+    profiles: z.array(profileSchema).length(1),
+    settings: z.array(settingsSchema).length(1),
+    sleepEntries: z.array(sleepSchema),
+    mealEntries: z.array(mealSchema),
+  }),
+})
 
-    const sleep = [...backup.data.sleepEntries].sort(
-      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-    )
-    for (let index = 1; index < sleep.length; index += 1) {
-      const previousEnd = sleep[index - 1].endAt
-      if (!previousEnd || new Date(sleep[index].startAt) < new Date(previousEnd)) {
-        context.addIssue({ code: 'custom', message: 'Sleep records overlap' })
-        break
-      }
-    }
-  })
+const legacyBottleSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['powderFormula', 'readyFormula', 'expressedMilk']),
+  status: z.enum(['prepared', 'feeding', 'finished', 'discarded']),
+  storage: z.enum(['fresh', 'fridge', 'roomTemperature']),
+  preparedAt: z.iso.datetime(),
+  feedingStartedAt: z.iso.datetime().optional(),
+  finishedAt: z.iso.datetime().optional(),
+  discardedAt: z.iso.datetime().optional(),
+  offeredMl: z.number(),
+  consumedMl: z.number().optional(),
+  notes: z.string().optional(),
+  guidanceVersion: z.string(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+})
 
-export type BabyCheckBackup = z.infer<typeof backupSchema>
+const backupV1Schema = z.object({
+  app: z.literal('BabyCheck'),
+  schemaVersion: z.literal(1),
+  exportedAt: z.iso.datetime(),
+  data: z.object({
+    profiles: z.array(z.record(z.string(), z.unknown())).length(1),
+    settings: z.array(z.record(z.string(), z.unknown())).length(1),
+    sleepEntries: z.array(sleepSchema),
+    bottleEntries: z.array(legacyBottleSchema),
+    fussySessions: z.array(z.unknown()),
+  }),
+})
+
+export type BabyCheckBackup = z.infer<typeof backupV2Schema>
 
 export async function exportDatabase(): Promise<BabyCheckBackup> {
   return {
     app: 'BabyCheck',
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: nowIso(),
     data: {
       profiles: await db.profiles.toArray(),
       settings: await db.settings.toArray(),
       sleepEntries: await db.sleepEntries.toArray(),
-      bottleEntries: await db.bottleEntries.toArray(),
-      fussySessions: await db.fussySessions.toArray(),
+      mealEntries: await db.mealEntries.toArray(),
     },
   }
 }
 
 export function validateBackup(input: unknown): BabyCheckBackup {
-  return backupSchema.parse(input)
+  const version = z.object({ schemaVersion: z.number() }).parse(input).schemaVersion
+  if (version === 2) return backupV2Schema.parse(input)
+  if (version !== 1) throw new Error('Unsupported BabyCheck backup version')
+  const legacy = backupV1Schema.parse(input)
+  const timestamp = nowIso()
+  const rawProfile = legacy.data.profiles[0]
+  const rawSettings = legacy.data.settings[0]
+  const profile = profileSchema.parse({
+    id: 'primary',
+    nickname: typeof rawProfile.nickname === 'string' ? rawProfile.nickname : '',
+    birthDate: rawProfile.birthDate,
+    dueDate: rawProfile.dueDate,
+    premature: Boolean(rawProfile.premature),
+    createdAt: rawProfile.createdAt,
+    updatedAt: rawProfile.updatedAt,
+  })
+  const settings = settingsSchema.parse({
+    ...defaultSettings(timestamp),
+    onboardingCompleted: Boolean(rawSettings.onboardingCompleted),
+    theme: rawSettings.theme,
+    persistentStorage: rawSettings.persistentStorage,
+    createdAt: rawSettings.createdAt,
+    updatedAt: rawSettings.updatedAt,
+  })
+  return backupV2Schema.parse({
+    app: 'BabyCheck',
+    schemaVersion: 2,
+    exportedAt: legacy.exportedAt,
+    data: {
+      profiles: [profile],
+      settings: [settings],
+      sleepEntries: legacy.data.sleepEntries,
+      mealEntries: legacy.data.bottleEntries.flatMap((entry) =>
+        legacyBottleToMeal(entry as LegacyBottleEntry),
+      ),
+    },
+  })
 }
 
 export async function importDatabase(backup: BabyCheckBackup): Promise<void> {
   await db.transaction(
     'rw',
-    [db.profiles, db.settings, db.sleepEntries, db.bottleEntries, db.fussySessions],
+    [db.profiles, db.settings, db.sleepEntries, db.mealEntries],
     async () => {
       await Promise.all([
         db.profiles.clear(),
         db.settings.clear(),
         db.sleepEntries.clear(),
-        db.bottleEntries.clear(),
-        db.fussySessions.clear(),
+        db.mealEntries.clear(),
       ])
-      await db.profiles.bulkAdd(backup.data.profiles as BabyProfile[])
-      await db.settings.bulkAdd(backup.data.settings as AppSettings[])
-      await db.sleepEntries.bulkAdd(backup.data.sleepEntries as SleepEntry[])
-      await db.bottleEntries.bulkAdd(backup.data.bottleEntries as BottleEntry[])
-      await db.fussySessions.bulkAdd(backup.data.fussySessions as FussySession[])
+      await db.profiles.bulkAdd(backup.data.profiles)
+      await db.settings.bulkAdd(backup.data.settings)
+      await db.sleepEntries.bulkAdd(backup.data.sleepEntries)
+      await db.mealEntries.bulkAdd(backup.data.mealEntries)
     },
   )
 }
@@ -248,14 +267,13 @@ export async function importDatabase(backup: BabyCheckBackup): Promise<void> {
 export async function clearDatabase(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.profiles, db.settings, db.sleepEntries, db.bottleEntries, db.fussySessions],
+    [db.profiles, db.settings, db.sleepEntries, db.mealEntries],
     async () => {
       await Promise.all([
         db.profiles.clear(),
         db.settings.clear(),
         db.sleepEntries.clear(),
-        db.bottleEntries.clear(),
-        db.fussySessions.clear(),
+        db.mealEntries.clear(),
       ])
     },
   )

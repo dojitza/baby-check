@@ -1,13 +1,4 @@
-export type DanishRegion =
-  'hovedstaden' | 'sjaelland' | 'syddanmark' | 'midtjylland' | 'nordjylland'
-
 export type ThemePreference = 'system' | 'light' | 'dark'
-
-export type BottleKind = 'powderFormula' | 'readyFormula' | 'expressedMilk'
-
-export type BottleStorage = 'fresh' | 'fridge' | 'roomTemperature'
-
-export type BottleStatus = 'prepared' | 'feeding' | 'finished' | 'discarded'
 
 export interface BabyProfile {
   id: 'primary'
@@ -15,8 +6,6 @@ export interface BabyProfile {
   birthDate: string
   dueDate?: string
   premature: boolean
-  region: DanishRegion
-  bottleKinds: BottleKind[]
   createdAt: string
   updatedAt: string
 }
@@ -29,86 +18,58 @@ export interface SleepEntry {
   updatedAt: string
 }
 
-export interface BottleEntry {
+export type MealKind = 'breast' | 'bottle' | 'solids'
+
+export interface MealEntry {
   id: string
-  kind: BottleKind
-  status: BottleStatus
-  storage: BottleStorage
-  preparedAt: string
-  feedingStartedAt?: string
-  finishedAt?: string
-  discardedAt?: string
-  offeredMl: number
-  consumedMl?: number
+  kind: MealKind
+  at: string
+  amountMl?: number
+  durationMinutes?: number
   notes?: string
-  guidanceVersion: string
   createdAt: string
   updatedAt: string
 }
 
-export type FussyCheckCategory =
-  | 'urgent'
-  | 'bottleSafety'
-  | 'tired'
-  | 'hungry'
-  | 'nappy'
-  | 'wind'
-  | 'temperature'
-  | 'contact'
-  | 'stimulation'
-  | 'discomfort'
-  | 'professionalCare'
-  | 'caregiverSafety'
-
-export type FussyCheckOutcome = 'notIt' | 'helped' | 'skipped'
-
-export interface FussyCheckResult {
-  category: FussyCheckCategory
-  outcome: FussyCheckOutcome
-  completedAt: string
-}
-
-export interface FussySessionSnapshot {
-  babyAgeDays: number
-  correctedAgeDays: number
-  awakeMinutes: number | null
-  lastBottleMinutesAgo: number | null
-  lastBottleMl: number | null
-  sleepMinutes24h: number
-  activeBottleIds: string[]
-}
-
-export interface FussySession {
-  id: string
-  startedAt: string
-  endedAt?: string
-  resolved: boolean
-  resolvedBy?: FussyCheckCategory
-  recommendationOrder: FussyCheckCategory[]
-  snapshot: FussySessionSnapshot
-  results: FussyCheckResult[]
-}
+export type ReminderKind = 'sleep' | 'meal'
+export type NotificationPermissionState = NotificationPermission | 'unsupported'
 
 export interface AppSettings {
   id: 'settings'
   onboardingCompleted: boolean
   theme: ThemePreference
   persistentStorage: 'unknown' | 'granted' | 'notGranted'
+  sleepRemindersEnabled: boolean
+  mealRemindersEnabled: boolean
+  notificationPermission: NotificationPermissionState
+  lastSleepReminderKey?: string
+  lastMealReminderKey?: string
   lastBackupAt?: string
-  lastGuidanceReviewAcknowledged?: string
   createdAt: string
   updatedAt: string
 }
 
-export interface SourceReference {
-  id: string
-  authority: string
+export type RhythmState = 'notEnoughData' | 'onTrack' | 'approaching' | 'due' | 'overdue'
+
+export interface SleepGuidanceBand {
+  minAgeDays: number
+  maxAgeDays: number
+  recommendedMinMinutes: number
+  recommendedMaxMinutes: number
+  possibleMinMinutes: number
+  possibleMaxMinutes: number
+  sourceId: string
+}
+
+export interface NextEventEstimate {
+  kind: ReminderKind
+  state: RhythmState
+  dueAt?: string
+  minutesUntilDue?: number
+  personalTargetMinutes?: number
+  sampleCount: number
   title: string
-  url: string
-  reviewedAt?: string
-  accessedAt: string
-  topic: 'crying' | 'formula' | 'sleep' | 'urgentCare' | 'regionalCare'
-  note: string
+  reason: string
 }
 
 export interface DerivedMetrics {
@@ -121,21 +82,49 @@ export interface DerivedMetrics {
   sleepMinutes24h: number
   recentWakeDurations: number[]
   usualWakeMedianMinutes: number | null
-  lastBottle?: BottleEntry
-  lastBottleMinutesAgo: number | null
-  recentBottleIntervals: number[]
-  usualBottleIntervalMinutes: number | null
-  recentBottleAmounts: number[]
-  activeBottles: BottleEntry[]
+  lastSleep?: SleepEntry
+  lastMeal?: MealEntry
+  lastMealMinutesAgo: number | null
+  recentMealIntervals: number[]
+  usualMealIntervalMinutes: number | null
+  meals24h: number
 }
 
-export interface CheckRecommendation {
-  category: FussyCheckCategory
-  lane: 1 | 2 | 3 | 4 | 5
-  score: number
+export interface RhythmSummary {
+  guidance: SleepGuidanceBand
+  sleep: NextEventEstimate
+  meal: NextEventEstimate
+}
+
+export interface SourceReference {
+  id: string
+  authority: string
   title: string
-  action: string
-  reason: string
-  sourceIds: string[]
-  urgent?: boolean
+  url: string
+  reviewedAt?: string
+  accessedAt: string
+  topic: 'sleep' | 'feeding' | 'notifications'
+  note: string
+}
+
+// Retained only for schema-v1 IndexedDB and backup migration.
+export type LegacyBottleKind = 'powderFormula' | 'readyFormula' | 'expressedMilk'
+export type LegacyBottleStorage = 'fresh' | 'fridge' | 'roomTemperature'
+export type LegacyBottleStatus = 'prepared' | 'feeding' | 'finished' | 'discarded'
+
+export interface LegacyBottleEntry {
+  id: string
+  kind: LegacyBottleKind
+  status: LegacyBottleStatus
+  storage: LegacyBottleStorage
+  preparedAt: string
+  feedingStartedAt?: string
+  finishedAt?: string
+  discardedAt?: string
+  offeredMl: number
+  consumedMl?: number
+  notes?: string
+  guidanceVersion: string
+  createdAt: string
+  updatedAt: string
 }
